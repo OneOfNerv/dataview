@@ -1,0 +1,34 @@
+[data-theme='blue'] {
+  /* Element Plus Blue Theme Variables */
+  --el-color-primary: #0052cc;
+  --el-color-primary-light-3: #3375d6;
+  --el-color-primary-light-5: #6697e0;
+  --el-color-primary-light-7: #99baeb;
+  --el-color-primary-light-8: #b3cbf2;
+  --el-color-primary-light-9: #ccdcf7;
+  --el-color-primary-dark-2: #0042a3;
+
+  --el-bg-color: #f0f5ff;
+  --el-bg-color-page: #e6f0ff;
+  --el-bg-color-overlay: #ffffff;
+  
+  --el-text-color-primary: #001d4d;
+  --el-text-color-regular: #002e7a;
+  --el-text-color-secondary: #4d70b3;
+  --el-text-color-placeholder: #8099cc;
+  --el-text-color-disabled: #b3c2e0;
+
+  --el-border-color: #adc6ff;
+  --el-border-color-light: #d6e4ff;
+  --el-border-color-lighter: #f0f5ff;
+  --el-border-color-extra-light: #f7faff;
+
+  --el-fill-color: #e6f0ff;
+  --el-fill-color-light: #f0f5ff;
+  --el-fill-color-lighter: #f5f8ff;
+  --el-fill-color-extra-light: #fafbff;
+  
+  --el-box-shadow: 0px 12px 32px 4px rgba(0, 82, 204, 0.1), 0px 8px 20px rgba(0, 82, 204, 0.05);
+  --el-box-shadow-light: 0px 0px 12px rgba(0, 82, 204, 0.1);
+  --el-box-shadow-lighter: 0px 0px 6px rgba(0, 82, 204, 0.05);
+}

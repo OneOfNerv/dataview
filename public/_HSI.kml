@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+<Document id="root_doc">
+<Folder><name>XIGUANG_002_20260131_0000000009_0227_0082_W115.1_N30.9_L1BF_HSI.kml</name>
+  <Placemark>
+	<Style><LineStyle><color>ff0000ff</color></LineStyle><PolyStyle><fill>0</fill></PolyStyle></Style>
+      <Polygon><outerBoundaryIs><LinearRing><coordinates>-115.386837282611,31.0915515034455 -114.649198061287,30.9717640171103 -114.717784697926,30.6903928365075 -115.453229404338,30.8099737352964</coordinates></LinearRing></outerBoundaryIs></Polygon>
+  </Placemark>
+</Folder>
+</Document></kml>
