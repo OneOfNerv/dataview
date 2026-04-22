@@ -608,10 +608,12 @@ export function useCogTif(getViewer: () => any) {
     }
 
     const meta: CogMeta = { width, height, bandCount, bbox, noDataValue: effectiveNoData, overviewCount, stats }
+    console.log('[COG] bbox:', bbox, 'width:', width, 'height:', height, 'bandCount:', bandCount)
 
     //创建 Provider（主线程 Cesium 集成 + Worker Pool）
     const provider = new CogImageryProvider(id, workerPool, meta, opts)
-    const imageryLayer = viewer.imageryLayers.addImageryProvider(provider as any)
+    const imageryLayer = new Cesium.ImageryLayer(provider as any)
+    viewer.imageryLayers.add(imageryLayer)
     imageryLayer.alpha = opts.alpha
     cogLayers.set(id, { url, imageryLayer, provider, options: opts, meta })
 
@@ -665,10 +667,10 @@ export function useCogTif(getViewer: () => any) {
     // 强制 Cesium 丢弃已缓存瓦片并重新请求
     const layerIndex = viewer.imageryLayers.indexOf(ctx.imageryLayer)
     viewer.imageryLayers.remove(ctx.imageryLayer, false)
-    const newLayer = viewer.imageryLayers.addImageryProvider(
-      ctx.provider as any,
-      layerIndex >= 0 ? layerIndex : undefined
+    const newLayer = new Cesium.ImageryLayer(
+      ctx.provider as any
     )
+    viewer.imageryLayers.add(newLayer, layerIndex >= 0 ? layerIndex : undefined)
     newLayer.alpha = ctx.options.alpha
     ctx.imageryLayer = newLayer
 

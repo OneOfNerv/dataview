@@ -163,7 +163,21 @@ async function handleOpen(msg: {
   const height = image.getHeight()
   const bandCount = image.getSamplesPerPixel()
   const rawBbox = image.getBoundingBox()
-  const bbox: [number, number, number, number] = [rawBbox[0], rawBbox[1], rawBbox[2], rawBbox[3]]
+  let bbox: [number, number, number, number] = [rawBbox[0], rawBbox[1], rawBbox[2], rawBbox[3]]
+
+  // 检测投影坐标（Web Mercator EPSG:3857）并转换为 WGS84 度
+  if (Math.abs(bbox[0]) > 180 || Math.abs(bbox[2]) > 180) {
+    const mercatorToDeg = (x: number, y: number): [number, number] => {
+      const lon = (x / 20037508.342789244) * 180
+      let lat = (y / 20037508.342789244) * 180
+      lat = (180 / Math.PI) * (2 * Math.atan(Math.exp(lat * Math.PI / 180)) - Math.PI / 2)
+      return [lon, lat]
+    }
+    const [w, s] = mercatorToDeg(bbox[0], bbox[1])
+    const [e, n] = mercatorToDeg(bbox[2], bbox[3])
+    bbox = [w, s, e, n]
+    console.log('[COG Worker] Converted Web Mercator bbox to WGS84:', bbox)
+  }
   const imageCount = await tiff.getImageCount()
   const overviewCount = imageCount - 1
 
@@ -183,10 +197,18 @@ async function handleOpen(msg: {
     : NaN
 
   // 采样统计
-  const sampleBands = msg.renderMode === 'rgb' ? msg.rgbBands : [msg.bandIndex]
-  const sampleW = Math.min(width, 512)
-  const sampleH = Math.min(height, 512)
-  const sampleRasters = await image.readRasters({
+  const sampleBands = bandCount >= 3
+    ? Array.from(new Set([msg.bandIndex, ...msg.rgbBands]))
+    : [msg.bandIndex]
+  const statsImage = images.length > 1 ? images[images.length - 1] : image
+  const statsW = statsImage.getWidth()
+  const statsH = statsImage.getHeight()
+  const sampleW = Math.min(statsW, 512)
+  const sampleH = Math.min(statsH, 512)
+  const winL = Math.floor((statsW - sampleW) / 2)
+  const winT = Math.floor((statsH - sampleH) / 2)
+  const sampleRasters = await statsImage.readRasters({
+    window: [winL, winT, winL + sampleW, winT + sampleH],
     width: sampleW, height: sampleH,
     samples: sampleBands,
     interleave: false
@@ -197,9 +219,14 @@ async function handleOpen(msg: {
     stats.set(sampleBands[i], calculateBandStats(sampleRasters[i] as any, noDataValue))
   }
 
+  const isProjected = Math.abs(rawBbox[0]) > 180 || Math.abs(rawBbox[2]) > 180
+
   layers.set(msg.id, {
     tiff, image, images,
-    width, height, bbox, noDataValue, overviewCount, bandCount,
+    width, height, bbox,
+    rawBbox: [rawBbox[0], rawBbox[1], rawBbox[2], rawBbox[3]],
+    isProjected,
+    noDataValue, overviewCount, bandCount,
     stats
   })
 
@@ -240,18 +267,16 @@ async function handleRenderTile(msg: {
     return
   }
 
-  const { tiff, image, images, width, height, bbox, noDataValue, stats } = layer
+  const { tiff, image, images, width, height, bbox, rawBbox, isProjected, noDataValue, stats } = layer
   const TW = msg.tileWidth, TH = msg.tileHeight
   const hasNoData = !isNaN(noDataValue)
 
-  // 瓦片地理范围
-  const tW = msg.tileWest, tS = msg.tileSouth
-  const tE = msg.tileEast, tN = msg.tileNorth
+  // 瓦片地理范围（度）
+  let tW = msg.tileWest, tS = msg.tileSouth
+  let tE = msg.tileEast, tN = msg.tileNorth
 
+  // 用地理 bbox 做范围裁剪判断
   const [cogW, cogS, cogE, cogN] = bbox
-  const cogDegW = cogE - cogW, cogDegH = cogN - cogS
-
-  // 裁剪到 COG 范围
   const cW = Math.max(tW, cogW), cS = Math.max(tS, cogS)
   const cE = Math.min(tE, cogE), cN = Math.min(tN, cogN)
   if (cW >= cE || cS >= cN) {
@@ -259,16 +284,39 @@ async function handleRenderTile(msg: {
     return
   }
 
-  // 像素窗口
-  const pxL = Math.floor(((cW - cogW) / cogDegW) * width)
-  const pxT = Math.floor(((cogN - cN) / cogDegH) * height)
-  const pxR = Math.ceil(((cE - cogW) / cogDegW) * width)
-  const pxB = Math.ceil(((cogN - cS) / cogDegH) * height)
+  // 像素窗口计算需要用原始投影坐标
+  const [projW, projS, projE, projN] = rawBbox
+  const projDegW = projE - projW, projDegH = projN - projS
 
-  // 渲染尺寸
+  // 如果是投影坐标，将瓦片范围和裁剪范围转换到投影坐标系
+  let pCW: number, pCS: number, pCE: number, pCN: number
+  if (isProjected) {
+    const degToMerc = (lon: number, lat: number): [number, number] => {
+      const x = lon * 20037508.342789244 / 180
+      const y = Math.log(Math.tan((90 + lat) * Math.PI / 360)) * 20037508.342789244 / Math.PI
+      return [x, y]
+    }
+    const [mCW, mCS] = degToMerc(cW, cS)
+    const [mCE, mCN] = degToMerc(cE, cN)
+    pCW = mCW; pCS = mCS; pCE = mCE; pCN = mCN
+
+    const [mTW, mTS] = degToMerc(tW, tS)
+    const [mTE, mTN] = degToMerc(tE, tN)
+    tW = mTW; tS = mTS; tE = mTE; tN = mTN
+  } else {
+    pCW = cW; pCS = cS; pCE = cE; pCN = cN
+  }
+
+  // 像素窗口（使用投影坐标计算）
+  const pxL = Math.floor(((pCW - projW) / projDegW) * width)
+  const pxT = Math.floor(((projN - pCN) / projDegH) * height)
+  const pxR = Math.ceil(((pCE - projW) / projDegW) * width)
+  const pxB = Math.ceil(((projN - pCS) / projDegH) * height)
+
+  // 渲染尺寸（tW/tE/tS/tN 已在投影坐标系下）
   const tileDegW = tE - tW, tileDegH = tN - tS
-  const renderW = Math.round(((cE - cW) / tileDegW) * TW)
-  const renderH = Math.round(((cN - cS) / tileDegH) * TH)
+  const renderW = Math.round(((pCE - pCW) / tileDegW) * TW)
+  const renderH = Math.round(((pCN - pCS) / tileDegH) * TH)
   const finalRW = Math.max(1, Math.min(renderW, TW))
   const finalRH = Math.max(1, Math.min(renderH, TH))
 
@@ -319,9 +367,9 @@ async function handleRenderTile(msg: {
     interleave: false
   })
 
-  // 偏移量（部分覆盖时）
-  const dx = Math.round(((cW - tW) / tileDegW) * TW)
-  const dy = Math.round(((tN - cN) / tileDegH) * TH)
+  // 偏移量（部分覆盖时，使用投影坐标）
+  const dx = Math.round(((pCW - tW) / tileDegW) * TW)
+  const dy = Math.round(((tN - pCN) / tileDegH) * TH)
 
   //  GPU 渲染
   if (gpuRenderer.isAvailable()) {
@@ -538,9 +586,17 @@ async function handleCalcStats(msg: {
     return
   }
 
-  const sampleRasters = await layer.image.readRasters({
-    width: msg.sampleWidth,
-    height: msg.sampleHeight,
+  // 使用最小的概览图像采样，避免全分辨率 buffer 分配失败
+  const statsImage = layer.images.length > 1 ? layer.images[layer.images.length - 1] : layer.image
+  const statsW = statsImage.getWidth()
+  const statsH = statsImage.getHeight()
+  const sW = Math.min(statsW, msg.sampleWidth)
+  const sH = Math.min(statsH, msg.sampleHeight)
+  const winL = Math.floor((statsW - sW) / 2)
+  const winT = Math.floor((statsH - sH) / 2)
+  const sampleRasters = await statsImage.readRasters({
+    window: [winL, winT, winL + sW, winT + sH],
+    width: sW, height: sH,
     samples: msg.bands,
     interleave: false
   })

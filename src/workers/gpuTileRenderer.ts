@@ -148,8 +148,8 @@ export class GpuTileRenderer {
 
   private _dataTexW = 0
   private _dataTexH = 0
-  private _rgbTexW = 0
-  private _rgbTexH = 0
+  private _rgbTexW: [number, number, number] = [0, 0, 0]
+  private _rgbTexH: [number, number, number] = [0, 0, 0]
 
   constructor() {
     try {
@@ -342,8 +342,8 @@ export class GpuTileRenderer {
       for (let i = 0; i < 3; i++) {
         gl.activeTexture(texUnits[i])
         const floatData = bands[i] instanceof Float32Array ? bands[i] as Float32Array : new Float32Array(bands[i] as any)
-        const newSz = this._uploadR32F(this._rgbTextures[i], floatData, srcW, srcH, this._rgbTexW, this._rgbTexH)
-        if (i === 0) { this._rgbTexW = newSz.w; this._rgbTexH = newSz.h }
+        const newSz = this._uploadR32F(this._rgbTextures[i], floatData, srcW, srcH, this._rgbTexW[i], this._rgbTexH[i])
+        this._rgbTexW[i] = newSz.w; this._rgbTexH[i] = newSz.h
         gl.uniform1i(locs[i], i)
       }
 

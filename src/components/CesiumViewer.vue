@@ -77,26 +77,58 @@
     <button @click="onCogLoad" :disabled="cogLoading" class="btn-tiff">
       {{ cogLoading ? '加载中...' : '加载 COG' }}
     </button>
-    <template v-if="cogLoaded">
+    <template v-if="cogLoaded && cogInfo">
+      <select v-model="cogConfig.renderMode" @change="applyCogUpdate" title="渲染模式">
+        <option value="singleband">单波段</option>
+        <option v-if="cogInfo.bandCount >= 3" value="rgb">RGB 合成</option>
+      </select>
+
+      <template v-if="cogConfig.renderMode === 'rgb'">
+        <div class="band-selectors">
+          <label class="band-label r">R
+            <select :value="cogConfig.rgbBands[0]" @change="setRgbBand(0, +($event.target as HTMLSelectElement).value)">
+              <option v-for="b in bandOptions" :key="b" :value="b">B{{ b + 1 }}</option>
+            </select>
+          </label>
+          <label class="band-label g">G
+            <select :value="cogConfig.rgbBands[1]" @change="setRgbBand(1, +($event.target as HTMLSelectElement).value)">
+              <option v-for="b in bandOptions" :key="b" :value="b">B{{ b + 1 }}</option>
+            </select>
+          </label>
+          <label class="band-label b">B
+            <select :value="cogConfig.rgbBands[2]" @change="setRgbBand(2, +($event.target as HTMLSelectElement).value)">
+              <option v-for="b in bandOptions" :key="b" :value="b">B{{ b + 1 }}</option>
+            </select>
+          </label>
+        </div>
+      </template>
+
+      <template v-else>
+        <select v-model.number="cogConfig.bandIndex" @change="applyCogUpdate" title="波段">
+          <option v-for="b in bandOptions" :key="b" :value="b">Band {{ b + 1 }}</option>
+        </select>
+        <div class="colormap-picker">
+          <div class="color-item" :class="{ active: cogConfig.colormap === 'gray' }" @click="selectCogColorMap('gray')" title="灰度">
+            <div class="gradient gradient-gray"></div>
+          </div>
+          <div class="color-item" :class="{ active: cogConfig.colormap === 'jet' }" @click="selectCogColorMap('jet')" title="彩虹">
+            <div class="gradient gradient-jet"></div>
+          </div>
+          <div class="color-item" :class="{ active: cogConfig.colormap === 'hot' }" @click="selectCogColorMap('hot')" title="热力">
+            <div class="gradient gradient-hot"></div>
+          </div>
+          <div class="color-item" :class="{ active: cogConfig.colormap === 'terrain' }" @click="selectCogColorMap('terrain')" title="地形">
+            <div class="gradient gradient-terrain"></div>
+          </div>
+        </div>
+      </template>
+
       <select v-model="cogConfig.stretch" @change="applyCogUpdate">
         <option value="minmax">极值拉伸</option>
         <option value="stddev">标准差拉伸</option>
         <option value="percent">百分比拉伸</option>
       </select>
-      <div class="colormap-picker">
-        <div class="color-item" :class="{ active: cogConfig.colormap === 'gray' }" @click="selectCogColorMap('gray')" title="灰度">
-          <div class="gradient gradient-gray"></div>
-        </div>
-        <div class="color-item" :class="{ active: cogConfig.colormap === 'jet' }" @click="selectCogColorMap('jet')" title="彩虹">
-          <div class="gradient gradient-jet"></div>
-        </div>
-        <div class="color-item" :class="{ active: cogConfig.colormap === 'hot' }" @click="selectCogColorMap('hot')" title="热力">
-          <div class="gradient gradient-hot"></div>
-        </div>
-        <div class="color-item" :class="{ active: cogConfig.colormap === 'terrain' }" @click="selectCogColorMap('terrain')" title="地形">
-          <div class="gradient gradient-terrain"></div>
-        </div>
-      </div>
+
       <button @click="clearCogData" class="btn-danger">清除 COG</button>
     </template>
   </div>
@@ -107,9 +139,9 @@
       :colormap="cogConfig.colormap"
       :stretch="cogConfig.stretch"
       :stats="currentBandStats"
-      :render-mode="cogInfo.renderMode"
-      :band-index="cogInfo.bandIndex"
-      :rgb-bands="cogInfo.rgbBands"
+      :render-mode="cogConfig.renderMode"
+      :band-index="cogConfig.bandIndex"
+      :rgb-bands="cogConfig.rgbBands"
     />
     <div class="scale-display">
       <span>比例尺：{{ controls.scaleText }}</span>
@@ -408,8 +440,11 @@ const wktstring = ref('POLYGON ((-115.081689 32.359361, -114.332064 32.238461, -
 const cogLoading = ref(false)
 const cogLoaded = ref(false)
 const currentCogId = 'cog-layer-01'
-const cogUrl = ref('/HSI_chla_cog.tiff')
+const cogUrl = ref('http://192.168.5.221:9000/image_original_output.tif')
 const cogConfig = reactive({
+  renderMode: 'rgb' as CogRenderMode,
+  bandIndex: 0,
+  rgbBands: [0, 1, 2] as [number, number, number],
   stretch: 'minmax' as CogSMode,
   colormap: 'jet' as CogCMap
 })
@@ -429,6 +464,17 @@ const currentBandStats = computed(() => {
   return cogInfo.value.stats[idx] ?? null
 })
 
+/** 可选波段列表 */
+const bandOptions = computed(() => {
+  const count = cogInfo.value?.bandCount ?? 1
+  return Array.from({ length: count }, (_, i) => i)
+})
+
+const setRgbBand = (channel: 0 | 1 | 2, bandIdx: number) => {
+  cogConfig.rgbBands[channel] = bandIdx
+  applyCogUpdate()
+}
+
 const onCogLoad = async () => {
   let url = cogUrl.value
   if (!url) {
@@ -444,6 +490,7 @@ const onCogLoad = async () => {
       flyTo: true
     })
     cogLoaded.value = true
+    cogConfig.renderMode = info.renderMode as CogRenderMode
     cogInfo.value = {
       renderMode: info.renderMode as CogRenderMode,
       bandCount: info.bandCount,
@@ -467,9 +514,17 @@ const selectCogColorMap = (cmap: CogCMap) => {
 
 const applyCogUpdate = () => {
   cogTools.updateCogLayer(currentCogId, {
+    renderMode: cogConfig.renderMode,
+    bandIndex: cogConfig.bandIndex,
+    rgbBands: [...cogConfig.rgbBands] as [number, number, number],
     colormap: cogConfig.colormap,
     stretch: cogConfig.stretch
   })
+  if (cogInfo.value) {
+    cogInfo.value.renderMode = cogConfig.renderMode
+    cogInfo.value.bandIndex = cogConfig.bandIndex
+    cogInfo.value.rgbBands = [...cogConfig.rgbBands] as [number, number, number]
+  }
 }
 
 const clearCogData = () => {
@@ -531,6 +586,20 @@ button:hover { background: #555; }
 .btn-axis.active { background: #0d9488; border-color: #0d9488; }
 .axis-status { color: #a3a3a3; font-size: 12px; margin-left: 4px; }
 .colormap-picker { display: flex; gap: 6px; align-items: center; }
+.band-selectors {
+  display: flex; gap: 4px; align-items: center;
+}
+.band-label {
+  display: flex; align-items: center; gap: 2px;
+  font-size: 12px; font-weight: 600; color: #ccc;
+}
+.band-label select {
+  width: 56px; padding: 4px 2px; font-size: 12px;
+  background: #333; border: 1px solid #555; color: #fff; border-radius: 3px;
+}
+.band-label.r { color: #f77; }
+.band-label.g { color: #7f7; }
+.band-label.b { color: #7af; }
 .color-item {
   width: 45px; height: 22px; border: 2px solid transparent; border-radius: 3px;
   cursor: pointer; box-sizing: border-box; transition: all 0.2s;
