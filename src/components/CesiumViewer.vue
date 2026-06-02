@@ -21,6 +21,10 @@
     <button @click="clearNadirDemo()">清理星下点轨迹</button>
     <button @click="runOrbitFovDemo()">卫星轨道视锥</button>
     <button @click="orbitFovTools.clearVisualization(); orbitFovActive = false">清除轨道视锥</button>
+    <button @click="loadAdministrativePieMap" :disabled="adminPieLoaded || adminPieLoading" class="btn-uom">
+      {{ adminPieLoading ? '立体行政区加载中' : adminPieLoaded ? '立体行政区已加载' : '立体行政区饼图' }}
+    </button>
+    <button @click="clearAdministrativePieMap" :disabled="!adminPieLoaded">清除立体行政区</button>
     <label class="roll-control" v-if="orbitFovActive">
       LANDSAT侧摆：<input type="range" min="-45" max="45" step="1" v-model.number="landsatRoll" @input="onLandsatRollChange" />
       <span>{{ landsatRoll }}°</span>
@@ -229,6 +233,7 @@ import { useCogTif } from '../hooks/useCogTif'
 import type { CogColorMap as CogCMap, CogStretchMode as CogSMode, CogRenderMode } from '../hooks/useCogTif'
 import { useCogHeatmap } from '../hooks/useCogHeatmap'
 import type { CogColorMap as HeatmapCMap, CogStretchMode as HeatmapSMode } from '../hooks/useCogHeatmap'
+import { useCesiumAdministrativePieMap } from '../hooks/useCesiumAdministrativePieMap'
 import CogLegend from './CogLegend.vue'
 
 const { getViewer, initmap, destroyCesium } = useCesium()
@@ -243,11 +248,56 @@ const tiffTools = useCesiumTiffPolygon(getViewer)
 const cogTools = useCogTif(getViewer)
 const heatmapTools = useCogHeatmap(getViewer)
 const orbitFovTools = useSatelliteOrbitFov(getViewer)
+const adminPieMapTools = useCesiumAdministrativePieMap(getViewer)
 const layerTools = useCesiumLayer(getViewer)
 const layerAxis = useCesiumTimelineLayerSwitch(getViewer)
 const axisItems = layerAxis.axisItemsSorted
 const activeAxisId = layerAxis.activeItemId
 const axisDemoEntities: Cesium.Entity[] = []
+const adminPieLoaded = ref(false)
+const adminPieLoading = ref(false)
+const adminPieLayerId = 'administrative-pie-demo'
+const adminPieDemoGeoJsonUrl = '/administrative-pie-demo.geojson'
+
+const loadAdministrativePieMap = async () => {
+  adminPieLoading.value = true
+  try {
+    const response = await fetch(adminPieDemoGeoJsonUrl)
+    if (!response.ok) throw new Error(`GeoJSON 加载失败: ${response.status}`)
+    const geojson = await response.json()
+
+    const entities = await adminPieMapTools.addAdministrativePieMap(adminPieLayerId, geojson, {
+      heightProperty: 'value',
+      tiandituToken: '079632b1ec7b3f0bdc3dc04309c59b1e',
+      terrainProviderType: 'url',
+      terrainUrl: 'http://',
+      minHeight: 1400,
+      maxHeight: 12000,
+      baseHeight: 0,
+      hoverLiftHeight: 1400,
+      flyTo: true,
+      onRegionClick: (region) => {
+        console.log('行政厚饼点击:', {
+          id: region.id,
+          name: region.name,
+          value: region.value,
+          properties: region.properties
+        })
+      }
+    })
+    adminPieLoaded.value = entities.length > 0
+  } catch (error) {
+    console.error('行政厚饼 GeoJSON 加载失败:', error)
+    alert('行政厚饼 GeoJSON 加载失败，请检查 public/administrative-pie-demo.geojson')
+  } finally {
+    adminPieLoading.value = false
+  }
+}
+
+const clearAdministrativePieMap = () => {
+  adminPieMapTools.clearAdministrativePieMap(adminPieLayerId)
+  adminPieLoaded.value = false
+}
 
 // ================= UOM 适飞区 =================
 const uomLayerId = 'uom-flyzone'
@@ -374,6 +424,7 @@ onUnmounted(() => {
   tiffTools.destroyTiffTools() // 全局销毁
   cogTools.destroyCogTools()   // COG 销毁
   heatmapTools.destroyHeatmapTools()
+  adminPieMapTools.destroyAdministrativePieMap()
   layerTools.removeAllLayers()
   layerAxis.clearItems(false)
   const viewer = getViewer()
