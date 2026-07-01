@@ -11,6 +11,7 @@
  *   />
  */
 import { computed } from 'vue'
+import type { CogClassItem } from '../utils/cogClassification'
 
 export interface CogLegendProps {
   colormap: 'gray' | 'jet' | 'hot' | 'terrain'
@@ -18,8 +19,9 @@ export interface CogLegendProps {
   stats: { min: number; max: number; mean: number; stddev: number } | null
   percentClip?: number
   bandIndex?: number
-  renderMode?: 'singleband' | 'rgb'
+  renderMode?: 'singleband' | 'rgb' | 'classified'
   rgbBands?: [number, number, number]
+  classes?: CogClassItem[]
   title?: string
 }
 
@@ -28,6 +30,7 @@ const props = withDefaults(defineProps<CogLegendProps>(), {
   bandIndex: 0,
   renderMode: 'singleband',
   rgbBands: () => [0, 1, 2] as [number, number, number],
+  classes: () => [],
   title: '图例'
 })
 
@@ -78,6 +81,7 @@ const stretchLabel = computed(() => {
 
 const displayTitle = computed(() => {
   if (props.title) return props.title
+  if (props.renderMode === 'classified') return `分类图 Band ${props.bandIndex + 1}`
   return props.renderMode === 'rgb' ? 'RGB 真彩色' : `Band ${props.bandIndex}`
 })
 
@@ -96,7 +100,7 @@ function fmtNum(v: number): string {
   <div class="cog-legend">
     <div class="legend-header">
       <span class="legend-title">{{ displayTitle }}</span>
-      <span class="legend-cmap">{{ colormapLabel[colormap] ?? colormap }}</span>
+      <span class="legend-cmap">{{ renderMode === 'classified' ? '分类' : colormapLabel[colormap] ?? colormap }}</span>
     </div>
     <template v-if="renderMode === 'singleband' && stats">
       <div class="legend-body">
@@ -120,6 +124,15 @@ function fmtNum(v: number): string {
         <div class="rgb-row"><span class="rgb-dot r" />R&nbsp;&rarr;&nbsp;Band {{ rgbBands[0] }}</div>
         <div class="rgb-row"><span class="rgb-dot g" />G&nbsp;&rarr;&nbsp;Band {{ rgbBands[1] }}</div>
         <div class="rgb-row"><span class="rgb-dot b" />B&nbsp;&rarr;&nbsp;Band {{ rgbBands[2] }}</div>
+      </div>
+    </template>
+    <template v-else-if="renderMode === 'classified'">
+      <div class="legend-classes">
+        <div v-for="item in classes" :key="`${item.value}-${item.id ?? item.name}`" class="class-row">
+          <span class="class-swatch" :style="{ background: item.color }" />
+          <span class="class-name">{{ item.name }}</span>
+          <span class="class-value">{{ item.value }}</span>
+        </div>
       </div>
     </template>
   </div>
@@ -246,4 +259,38 @@ function fmtNum(v: number): string {
 .rgb-dot.r { background: #f55; box-shadow: 0 0 4px rgba(255, 85, 85, 0.5); }
 .rgb-dot.g { background: #5f5; box-shadow: 0 0 4px rgba(85, 255, 85, 0.5); }
 .rgb-dot.b { background: #58f; box-shadow: 0 0 4px rgba(85, 136, 255, 0.5); }
+
+.legend-classes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 10px 12px 12px;
+}
+.class-row {
+  display: grid;
+  grid-template-columns: 14px minmax(56px, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 150px;
+  font-size: 12px;
+  color: #ddd;
+}
+.class-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+}
+.class-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.class-value {
+  font-family: 'Menlo', 'Consolas', 'Monaco', monospace;
+  font-size: 10px;
+  color: #9ca3af;
+}
 </style>

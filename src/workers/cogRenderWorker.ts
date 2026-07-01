@@ -17,6 +17,7 @@
 
 import * as GeoTIFF from 'geotiff'
 import { GpuTileRenderer } from './gpuTileRenderer'
+import type { NormalizedCogClassificationStyle } from '../utils/cogClassification'
 
 //GPU 渲染器（单例）
 
@@ -29,7 +30,7 @@ if (gpuRenderer.isAvailable()) {
 
 type CogColorMap = 'gray' | 'jet' | 'hot' | 'terrain'
 type CogStretchMode = 'minmax' | 'stddev' | 'percent'
-type CogRenderMode = 'singleband' | 'rgb'
+type CogRenderMode = 'singleband' | 'rgb' | 'classified'
 
 interface BandStats {
   min: number; max: number; mean: number; stddev: number
@@ -42,6 +43,8 @@ interface LayerState {
   width: number
   height: number
   bbox: [number, number, number, number]
+  rawBbox: [number, number, number, number]
+  isProjected: boolean
   noDataValue: number
   overviewCount: number
   bandCount: number
@@ -261,6 +264,7 @@ async function handleRenderTile(msg: {
   colormap: CogColorMap
   stretch: CogStretchMode
   percentClip: number
+  classification: NormalizedCogClassificationStyle
 }) {
   const layer = layers.get(msg.id)
   if (!layer) {
@@ -268,7 +272,7 @@ async function handleRenderTile(msg: {
     return
   }
 
-  const { tiff, image, images, width, height, bbox, rawBbox, isProjected, noDataValue, stats } = layer
+  const { image, images, width, height, bbox, rawBbox, isProjected, noDataValue, stats } = layer
   const TW = msg.tileWidth, TH = msg.tileHeight
   const hasNoData = !isNaN(noDataValue)
 
@@ -376,7 +380,19 @@ async function handleRenderTile(msg: {
   if (gpuRenderer.isAvailable()) {
     let bitmap: ImageBitmap | null = null
 
-    if (msg.renderMode === 'rgb') {
+    if (msg.renderMode === 'classified') {
+      bitmap = gpuRenderer.renderClassified({
+        band: rasters[0] as any,
+        srcW: finalRW,
+        srcH: finalRH,
+        tileW: TW,
+        tileH: TH,
+        dx, dy,
+        noData: noDataValue,
+        hasNoData,
+        classification: msg.classification
+      })
+    } else if (msg.renderMode === 'rgb') {
       const bandMin: [number, number, number] = [0, 0, 0]
       const bandMax: [number, number, number] = [255, 255, 255]
       for (let i = 0; i < 3; i++) {
@@ -459,7 +475,41 @@ async function handleRenderTile(msg: {
   const total = finalRW * finalRH
   const px32 = new Uint32Array(TW * TH) // 全 0 = 透明
 
-  if (msg.renderMode === 'rgb') {
+  if (msg.renderMode === 'classified') {
+    const band = rasters[0] as any
+    const classColorMap = new Map<number, number>()
+    for (const item of msg.classification.classes) {
+      const [r, g, b, a] = item.rgba
+      classColorMap.set(
+        item.value,
+        (clampByte(a * 255) << 24) | (clampByte(b) << 16) | (clampByte(g) << 8) | clampByte(r)
+      )
+    }
+    const [ur, ug, ub, ua] = msg.classification.unknownColor
+    const unknown = msg.classification.transparentUnknown
+      ? 0
+      : (clampByte(ua * 255) << 24) | (clampByte(ub) << 16) | (clampByte(ug) << 8) | clampByte(ur)
+
+    if (fullCover) {
+      for (let i = 0; i < total; i++) {
+        const v = band[i]
+        if (!isInvalid(v, noDataValue, hasNoData)) {
+          px32[i] = classColorMap.get(Math.round(v)) ?? unknown
+        }
+      }
+    } else {
+      for (let row = 0; row < finalRH; row++) {
+        const srcRow = row * finalRW
+        const dstRow = (row + dy) * TW + dx
+        for (let col = 0; col < finalRW; col++) {
+          const v = band[srcRow + col]
+          if (!isInvalid(v, noDataValue, hasNoData)) {
+            px32[dstRow + col] = classColorMap.get(Math.round(v)) ?? unknown
+          }
+        }
+      }
+    }
+  } else if (msg.renderMode === 'rgb') {
     const rB = rasters[0] as any, gB = rasters[1] as any, bB = rasters[2] as any
     const bandMin: [number, number, number] = [0, 0, 0]
     const bandMax: [number, number, number] = [255, 255, 255]

@@ -11,8 +11,11 @@
  *   5. transferToImageBitmap() zero-copy 获取 GPU 渲染结果
  *   6. 若 OffscreenCanvas / WebGL2 不可用，isAvailable() 返回 false → 外部 fallback CPU
  */
+import type { NormalizedCogClassificationStyle } from '../utils/cogClassification'
 
 type CogColorMap = 'gray' | 'jet' | 'hot' | 'terrain'
+
+const MAX_CLASS_COUNT = 64
 
 // GLSL 着色器
 
@@ -95,6 +98,44 @@ void main() {
 }
 `
 
+/** 分类图：R32F 栅格值精确匹配 class value，直接输出 class color */
+const FS_CLASSIFIED = `#version 300 es
+precision highp float;
+in vec2 v_texcoord;
+
+uniform sampler2D u_data;
+uniform float u_noData;
+uniform float u_hasNoData;
+uniform int u_classCount;
+uniform float u_classValues[${MAX_CLASS_COUNT}];
+uniform vec4 u_classColors[${MAX_CLASS_COUNT}];
+uniform vec4 u_unknownColor;
+
+out vec4 outColor;
+
+void main() {
+  float val = texture(u_data, v_texcoord).r;
+  bool invalid = (u_hasNoData > 0.5 && val == u_noData)
+              || val == -9999.0;
+  if (invalid || val != val) {
+    outColor = vec4(0.0);
+    return;
+  }
+
+  for (int i = 0; i < ${MAX_CLASS_COUNT}; i++) {
+    if (i >= u_classCount) {
+      break;
+    }
+    if (abs(val - u_classValues[i]) < 0.5) {
+      outColor = u_classColors[i];
+      return;
+    }
+  }
+
+  outColor = u_unknownColor;
+}
+`
+
 //  LUT 色带
 
 const COLOR_STOPS: Record<CogColorMap, number[][]> = {
@@ -134,9 +175,11 @@ export class GpuTileRenderer {
 
   private _singlebandProg: WebGLProgram | null = null
   private _rgbProg: WebGLProgram | null = null
+  private _classifiedProg: WebGLProgram | null = null
 
   private _sbLocs: Record<string, WebGLUniformLocation | null> = {}
   private _rgbLocs: Record<string, WebGLUniformLocation | null> = {}
+  private _classLocs: Record<string, WebGLUniformLocation | null> = {}
 
   private _dataTexture: WebGLTexture | null = null
   private _lutTexture: WebGLTexture | null = null
@@ -181,8 +224,9 @@ export class GpuTileRenderer {
       // 编译着色器
       this._singlebandProg = this._createProgram(VS_SOURCE, FS_SINGLEBAND)
       this._rgbProg = this._createProgram(VS_SOURCE, FS_RGB)
+      this._classifiedProg = this._createProgram(VS_SOURCE, FS_CLASSIFIED)
 
-      if (!this._singlebandProg || !this._rgbProg) {
+      if (!this._singlebandProg || !this._rgbProg || !this._classifiedProg) {
         console.warn('[GpuTileRenderer] Shader compilation failed')
         return
       }
@@ -204,6 +248,15 @@ export class GpuTileRenderer {
         u_hasNoData: gl.getUniformLocation(this._rgbProg, 'u_hasNoData'),
         u_bandMin:   gl.getUniformLocation(this._rgbProg, 'u_bandMin'),
         u_bandMax:   gl.getUniformLocation(this._rgbProg, 'u_bandMax'),
+      }
+      this._classLocs = {
+        u_data:         gl.getUniformLocation(this._classifiedProg, 'u_data'),
+        u_noData:       gl.getUniformLocation(this._classifiedProg, 'u_noData'),
+        u_hasNoData:    gl.getUniformLocation(this._classifiedProg, 'u_hasNoData'),
+        u_classCount:   gl.getUniformLocation(this._classifiedProg, 'u_classCount'),
+        u_classValues:  gl.getUniformLocation(this._classifiedProg, 'u_classValues[0]'),
+        u_classColors:  gl.getUniformLocation(this._classifiedProg, 'u_classColors[0]'),
+        u_unknownColor: gl.getUniformLocation(this._classifiedProg, 'u_unknownColor'),
       }
 
       this._setupQuadVAO()
@@ -368,6 +421,74 @@ export class GpuTileRenderer {
     }
   }
 
+  /**
+   * 分类图 GPU 渲染。分类值直接匹配颜色，不参与连续值拉伸。
+   */
+  renderClassified(opts: {
+    band: ArrayLike<number>
+    srcW: number
+    srcH: number
+    tileW: number
+    tileH: number
+    dx: number
+    dy: number
+    noData: number
+    hasNoData: boolean
+    classification: NormalizedCogClassificationStyle
+  }): ImageBitmap | null {
+    const gl = this._gl
+    const canvas = this._canvas
+    if (!gl || !canvas || !this._classifiedProg) return null
+
+    try {
+      const { band, srcW, srcH, tileW, tileH, dx, dy, noData, hasNoData, classification } = opts
+      const classCount = Math.min(classification.classes.length, MAX_CLASS_COUNT)
+      const classValues = new Float32Array(MAX_CLASS_COUNT)
+      const classColors = new Float32Array(MAX_CLASS_COUNT * 4)
+
+      for (let i = 0; i < classCount; i++) {
+        const item = classification.classes[i]
+        classValues[i] = item.value
+        classColors[i * 4] = item.rgba[0] / 255
+        classColors[i * 4 + 1] = item.rgba[1] / 255
+        classColors[i * 4 + 2] = item.rgba[2] / 255
+        classColors[i * 4 + 3] = item.rgba[3]
+      }
+
+      this._ensureCanvasSize(tileW, tileH)
+      gl.useProgram(this._classifiedProg)
+
+      gl.activeTexture(gl.TEXTURE0)
+      const floatData = band instanceof Float32Array ? band : new Float32Array(band as any)
+      const newSz = this._uploadR32F(this._dataTexture, floatData, srcW, srcH, this._dataTexW, this._dataTexH)
+      this._dataTexW = newSz.w; this._dataTexH = newSz.h
+      gl.uniform1i(this._classLocs.u_data!, 0)
+      gl.uniform1f(this._classLocs.u_noData!, noData)
+      gl.uniform1f(this._classLocs.u_hasNoData!, hasNoData ? 1.0 : 0.0)
+      gl.uniform1i(this._classLocs.u_classCount!, classCount)
+      gl.uniform1fv(this._classLocs.u_classValues!, classValues)
+      gl.uniform4fv(this._classLocs.u_classColors!, classColors)
+      gl.uniform4f(
+        this._classLocs.u_unknownColor!,
+        classification.unknownColor[0] / 255,
+        classification.unknownColor[1] / 255,
+        classification.unknownColor[2] / 255,
+        classification.unknownColor[3]
+      )
+
+      gl.clearColor(0, 0, 0, 0)
+      gl.viewport(0, 0, tileW, tileH)
+      gl.clear(gl.COLOR_BUFFER_BIT)
+      gl.viewport(dx, tileH - dy - srcH, srcW, srcH)
+      gl.drawArrays(gl.TRIANGLES, 0, 6)
+
+      return canvas.transferToImageBitmap()
+    } catch (e) {
+      console.warn('[GpuTileRenderer] Classified render failed:', e)
+      return null
+    }
+  }
+
   /** 销毁 GPU 资源 */
   destroy() {
     const gl = this._gl
@@ -380,6 +501,7 @@ export class GpuTileRenderer {
     }
     if (this._singlebandProg) gl.deleteProgram(this._singlebandProg)
     if (this._rgbProg) gl.deleteProgram(this._rgbProg)
+    if (this._classifiedProg) gl.deleteProgram(this._classifiedProg)
 
     this._available = false
     this._gl = null
@@ -484,7 +606,7 @@ export class GpuTileRenderer {
     gl.bufferData(gl.ARRAY_BUFFER, quadVertices, gl.STATIC_DRAW)
 
     // 为两个 program 设置 a_position attribute
-    for (const prog of [this._singlebandProg!, this._rgbProg!]) {
+    for (const prog of [this._singlebandProg!, this._rgbProg!, this._classifiedProg!]) {
       const loc = gl.getAttribLocation(prog, 'a_position')
       if (loc >= 0) {
         gl.enableVertexAttribArray(loc)

@@ -17,8 +17,7 @@ import {
   featureCollection,
   intersect as turfIntersect,
   multiPolygon,
-  polygon,
-  rewind
+  polygon
 } from '@turf/turf'
 import type { Feature, MultiPolygon, Polygon, Position } from 'geojson'
 

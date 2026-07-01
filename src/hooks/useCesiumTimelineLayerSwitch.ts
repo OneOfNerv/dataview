@@ -73,7 +73,7 @@ const resolveTarget = (target: LayerTarget): ResolvedTarget => {
   }
 
   if (!current) return null
-  if (isRef(current)) return current
+  if (isRef(current)) return current as Ref<ShowLike | null | undefined>
   if (isVisibilityController(current)) return current
   if (isShowLike(current)) return current
   return null
