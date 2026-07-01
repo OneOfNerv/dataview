@@ -21,6 +21,10 @@
     <button @click="clearNadirDemo()">清理星下点轨迹</button>
     <button @click="runOrbitFovDemo()">卫星轨道视锥</button>
     <button @click="orbitFovTools.clearVisualization(); orbitFovActive = false">清除轨道视锥</button>
+    <button @click="loadAdministrativePieMap" :disabled="adminPieLoaded || adminPieLoading" class="btn-uom">
+      {{ adminPieLoading ? '立体行政区加载中' : adminPieLoaded ? '立体行政区已加载' : '立体行政区' }}
+    </button>
+    <button @click="clearAdministrativePieMap" :disabled="!adminPieLoaded">清除立体行政区</button>
     <label class="roll-control" v-if="orbitFovActive">
       LANDSAT侧摆：<input type="range" min="-45" max="45" step="1" v-model.number="landsatRoll" @input="onLandsatRollChange" />
       <span>{{ landsatRoll }}°</span>
@@ -90,10 +94,14 @@
     <button @click="onCogLoad" :disabled="cogLoading" class="btn-tiff">
       {{ cogLoading ? '加载中...' : '加载 COG' }}
     </button>
+    <button @click="onClassCogLoad" :disabled="cogLoading" class="btn-class">
+      分类 COG 示例
+    </button>
     <template v-if="cogLoaded && cogInfo">
       <select v-model="cogConfig.renderMode" @change="applyCogUpdate" title="渲染模式">
         <option value="singleband">单波段</option>
         <option v-if="cogInfo.bandCount >= 3" value="rgb">RGB 合成</option>
+        <option value="classified">分类图</option>
       </select>
 
       <template v-if="cogConfig.renderMode === 'rgb'">
@@ -120,7 +128,19 @@
         <select v-model.number="cogConfig.bandIndex" @change="applyCogUpdate" title="波段">
           <option v-for="b in bandOptions" :key="b" :value="b">Band {{ b + 1 }}</option>
         </select>
-        <div class="colormap-picker">
+        <div v-if="cogConfig.renderMode === 'classified'" class="class-editor">
+          <label v-for="item in classificationClasses" :key="item.id ?? item.value" class="class-chip" :title="`${item.name}: ${item.value}`">
+            <input
+              type="color"
+              :value="item.color"
+              @input="setClassColor(item.value, ($event.target as HTMLInputElement).value)"
+              @change="setClassColor(item.value, ($event.target as HTMLInputElement).value)"
+            />
+            <span>{{ item.name }}</span>
+          </label>
+          <button class="btn-apply-class" :disabled="!classColorDirty" @click="applyClassColors">确认修改</button>
+        </div>
+        <div v-else class="colormap-picker">
           <div class="color-item" :class="{ active: cogConfig.colormap === 'gray' }" @click="selectCogColorMap('gray')" title="灰度">
             <div class="gradient gradient-gray"></div>
           </div>
@@ -136,7 +156,7 @@
         </div>
       </template>
 
-      <select v-model="cogConfig.stretch" @change="applyCogUpdate">
+      <select v-if="cogConfig.renderMode !== 'classified'" v-model="cogConfig.stretch" @change="applyCogUpdate">
         <option value="minmax">极值拉伸</option>
         <option value="stddev">标准差拉伸</option>
         <option value="percent">百分比拉伸</option>
@@ -199,6 +219,7 @@
       :render-mode="cogConfig.renderMode"
       :band-index="cogConfig.bandIndex"
       :rgb-bands="cogConfig.rgbBands"
+      :classes="classificationClasses"
     />
     <div class="scale-display">
       <span>比例尺：{{ controls.scaleText }}</span>
@@ -227,8 +248,10 @@ import { useNadirAreaTrackAnalysis } from '../hooks/useNadirAreaTrackAnalysis'
 import { useSatelliteOrbitFov } from '../hooks/useSatelliteOrbitFov'
 import { useCogTif } from '../hooks/useCogTif'
 import type { CogColorMap as CogCMap, CogStretchMode as CogSMode, CogRenderMode } from '../hooks/useCogTif'
+import type { CogClassItem } from '../utils/cogClassification'
 import { useCogHeatmap } from '../hooks/useCogHeatmap'
 import type { CogColorMap as HeatmapCMap, CogStretchMode as HeatmapSMode } from '../hooks/useCogHeatmap'
+import { useCesiumAdministrativePieMap } from '../hooks/useCesiumAdministrativePieMap'
 import CogLegend from './CogLegend.vue'
 
 const { getViewer, initmap, destroyCesium } = useCesium()
@@ -243,11 +266,56 @@ const tiffTools = useCesiumTiffPolygon(getViewer)
 const cogTools = useCogTif(getViewer)
 const heatmapTools = useCogHeatmap(getViewer)
 const orbitFovTools = useSatelliteOrbitFov(getViewer)
+const adminPieMapTools = useCesiumAdministrativePieMap(getViewer)
 const layerTools = useCesiumLayer(getViewer)
 const layerAxis = useCesiumTimelineLayerSwitch(getViewer)
 const axisItems = layerAxis.axisItemsSorted
 const activeAxisId = layerAxis.activeItemId
 const axisDemoEntities: Cesium.Entity[] = []
+const adminPieLoaded = ref(false)
+const adminPieLoading = ref(false)
+const adminPieLayerId = 'administrative-pie-demo'
+const adminPieDemoGeoJsonUrl = '/administrative-pie-demo.geojson'
+
+const loadAdministrativePieMap = async () => {
+  adminPieLoading.value = true
+  try {
+    const response = await fetch(adminPieDemoGeoJsonUrl)
+    if (!response.ok) throw new Error(`GeoJSON 加载失败: ${response.status}`)
+    const geojson = await response.json()
+
+    const entities = await adminPieMapTools.addAdministrativePieMap(adminPieLayerId, geojson, {
+      heightProperty: 'value',
+      tiandituToken: '079632b1ec7b3f0bdc3dc04309c59b1e',
+      terrainProviderType: 'url',
+      terrainUrl: 'http://',
+      minHeight: 1400,
+      maxHeight: 12000,
+      baseHeight: 0,
+      hoverLiftHeight: 1400,
+      flyTo: true,
+      onRegionClick: (region) => {
+        console.log('行政厚饼点击:', {
+          id: region.id,
+          name: region.name,
+          value: region.value,
+          properties: region.properties
+        })
+      }
+    })
+    adminPieLoaded.value = entities.length > 0
+  } catch (error) {
+    console.error('行政厚饼 GeoJSON 加载失败:', error)
+    alert('行政厚饼 GeoJSON 加载失败，请检查 public/administrative-pie-demo.geojson')
+  } finally {
+    adminPieLoading.value = false
+  }
+}
+
+const clearAdministrativePieMap = () => {
+  adminPieMapTools.clearAdministrativePieMap(adminPieLayerId)
+  adminPieLoaded.value = false
+}
 
 // ================= UOM 适飞区 =================
 const uomLayerId = 'uom-flyzone'
@@ -374,6 +442,7 @@ onUnmounted(() => {
   tiffTools.destroyTiffTools() // 全局销毁
   cogTools.destroyCogTools()   // COG 销毁
   heatmapTools.destroyHeatmapTools()
+  adminPieMapTools.destroyAdministrativePieMap()
   layerTools.removeAllLayers()
   layerAxis.clearItems(false)
   const viewer = getViewer()
@@ -562,7 +631,10 @@ const wktstring = ref('POLYGON ((-115.081689 32.359361, -114.332064 32.238461, -
 const cogLoading = ref(false)
 const cogLoaded = ref(false)
 const currentCogId = 'cog-layer-01'
-const cogUrl = ref('http://192.168.5.221:9000/image_original_output.tif')
+const cogUrl = ref('http://192.168.5.221:9000/CLCD_v01_2024_albert_shaanxi_COG.tif')
+const classJsonUrl = '/data/Class.json'
+const classificationClasses = ref<CogClassItem[]>([])
+const classColorDirty = ref(false)
 const cogConfig = reactive({
   renderMode: 'rgb' as CogRenderMode,
   bandIndex: 0,
@@ -607,11 +679,16 @@ const onCogLoad = async () => {
   cogLoading.value = true
   try {
     const info = await cogTools.addCogLayer(currentCogId, url, {
+      renderMode: cogConfig.renderMode,
+      bandIndex: cogConfig.bandIndex,
+      rgbBands: [...cogConfig.rgbBands] as [number, number, number],
       colormap: cogConfig.colormap,
       stretch: cogConfig.stretch,
+      classification: { classes: classificationClasses.value, transparentUnknown: true },
       flyTo: true
     })
     cogLoaded.value = true
+    classColorDirty.value = false
     cogConfig.renderMode = info.renderMode as CogRenderMode
     cogInfo.value = {
       renderMode: info.renderMode as CogRenderMode,
@@ -629,6 +706,29 @@ const onCogLoad = async () => {
   }
 }
 
+const loadClassificationClasses = async () => {
+  const response = await fetch(classJsonUrl)
+  if (!response.ok) throw new Error(`分类配置加载失败: ${response.status}`)
+  const data = await response.json() as CogClassItem[]
+  classificationClasses.value = data.map((item) => ({ ...item }))
+  classColorDirty.value = false
+  return classificationClasses.value
+}
+
+const onClassCogLoad = async () => {
+  try {
+    if (classificationClasses.value.length === 0) {
+      await loadClassificationClasses()
+    }
+    cogConfig.renderMode = 'classified'
+    cogConfig.bandIndex = 0
+    await onCogLoad()
+  } catch (err) {
+    console.error('分类 COG 加载失败:', err)
+    alert('分类 COG 加载失败，请检查 COG URL 与 /data/Class.json')
+  }
+}
+
 const selectCogColorMap = (cmap: CogCMap) => {
   cogConfig.colormap = cmap
   applyCogUpdate()
@@ -640,7 +740,8 @@ const applyCogUpdate = () => {
     bandIndex: cogConfig.bandIndex,
     rgbBands: [...cogConfig.rgbBands] as [number, number, number],
     colormap: cogConfig.colormap,
-    stretch: cogConfig.stretch
+    stretch: cogConfig.stretch,
+    classification: { classes: classificationClasses.value, transparentUnknown: true }
   })
   if (cogInfo.value) {
     cogInfo.value.renderMode = cogConfig.renderMode
@@ -649,10 +750,27 @@ const applyCogUpdate = () => {
   }
 }
 
+const setClassColor = (value: number, color: string) => {
+  classificationClasses.value = classificationClasses.value.map((item) =>
+    item.value === value ? { ...item, color } : item
+  )
+  classColorDirty.value = true
+}
+
+const applyClassColors = async () => {
+  if (cogConfig.renderMode === 'classified' && cogLoaded.value) {
+    await cogTools.updateCogLayer(currentCogId, {
+      classification: { classes: classificationClasses.value, transparentUnknown: true }
+    })
+    classColorDirty.value = false
+  }
+}
+
 const clearCogData = () => {
   cogTools.removeCogLayer(currentCogId)
   cogLoaded.value = false
   cogInfo.value = null
+  classColorDirty.value = false
 }
 
 // ═══════════ 3D 热力图 ═══════════
@@ -784,6 +902,7 @@ button, select {
 }
 button:hover { background: #555; }
 .btn-tiff { background: #2b83ba; border-color: #2b83ba; }
+.btn-class { background: #7c3aed; border-color: #7c3aed; }
 .btn-uom { background: #059669; border-color: #059669; }
 .btn-danger { background: #d7191c; border-color: #d7191c; }
 .divider { color: #666; font-weight: bold; margin: 0 4px; }
@@ -817,6 +936,54 @@ button:hover { background: #555; }
 .gradient-jet { background: linear-gradient(to right, #000080, #0000ff, #00ffff, #ffff00, #ff0000); }
 .gradient-hot { background: linear-gradient(to right, #000, #f00, #ff0, #fff); }
 .gradient-terrain { background: linear-gradient(to right, #2b83ba, #abdda4, #ffffbf, #fdae61, #d7191c); }
+.class-editor {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 520px;
+  overflow-x: auto;
+  padding: 2px 0;
+}
+.class-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #ddd;
+  font-size: 12px;
+}
+.class-chip input[type="color"] {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+}
+.class-chip span {
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.btn-apply-class {
+  flex: 0 0 auto;
+  height: 26px;
+  padding: 2px 10px;
+  background: #16a34a;
+  border-color: #16a34a;
+  font-size: 12px;
+}
+.btn-apply-class:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
 .scale-display {
   position: absolute; bottom: 0; left: 0; width: 100%; z-index: 999;
   background: rgba(20, 20, 20, 0.75); color: #ddd; padding: 6px 20px;

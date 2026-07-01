@@ -1,6 +1,6 @@
 import * as Cesium from 'cesium'
 import { buffer as turfBuffer, lineString } from '@turf/turf'
-import type { Feature, LineString, MultiPolygon, Polygon, Position } from 'geojson'
+import type { Feature, FeatureCollection, LineString, MultiPolygon, Polygon, Position } from 'geojson'
 
 type LngLat = [number, number]
 type PolygonLike = Polygon | MultiPolygon
@@ -522,10 +522,10 @@ export function useNadirPointDir(getViewer: () => Cesium.Viewer | null | undefin
       const buffered = turfBuffer(line, distanceKm, {
         units: 'kilometers',
         steps: options.steps ?? 32
-      })
+      }) as Feature<PolygonLike> | FeatureCollection<PolygonLike> | null
       if (!buffered) return
       if (buffered.type === 'FeatureCollection') {
-        buffered.features.forEach((feature) => collectBufferedFeature(feature as Feature))
+        buffered.features.forEach((feature: Feature<PolygonLike>) => collectBufferedFeature(feature))
         return
       }
       collectBufferedFeature(buffered as Feature)

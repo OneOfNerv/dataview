@@ -294,20 +294,21 @@ function buildHeatmapMesh(params: {
   const corner = Cesium.Cartesian3.fromDegrees(east, north, baseHeight + heightScale)
   const radius = Cesium.Cartesian3.distance(center, corner)
 
+  const attributes = new Cesium.GeometryAttributes()
+  attributes.position = new Cesium.GeometryAttribute({
+    componentDatatype: Cesium.ComponentDatatype.DOUBLE,
+    componentsPerAttribute: 3,
+    values: positions
+  })
+  attributes.color = new Cesium.GeometryAttribute({
+    componentDatatype: Cesium.ComponentDatatype.UNSIGNED_BYTE,
+    componentsPerAttribute: 4,
+    normalize: true,
+    values: colors
+  })
+
   return new Cesium.Geometry({
-    attributes: {
-      position: new Cesium.GeometryAttribute({
-        componentDatatype: Cesium.ComponentDatatype.DOUBLE,
-        componentsPerAttribute: 3,
-        values: positions
-      }),
-      color: new Cesium.GeometryAttribute({
-        componentDatatype: Cesium.ComponentDatatype.UNSIGNED_BYTE,
-        componentsPerAttribute: 4,
-        normalize: true,
-        values: colors
-      })
-    },
+    attributes,
     indices: finalIndices,
     primitiveType: Cesium.PrimitiveType.TRIANGLES,
     boundingSphere: new Cesium.BoundingSphere(center, radius)
@@ -340,12 +341,12 @@ export function useCogHeatmap(getViewer: () => any) {
       appearance: new Cesium.Appearance({
         vertexShaderSource: HEATMAP_VS,
         fragmentShaderSource: HEATMAP_FS,
-        renderState: Cesium.RenderState.fromCache({
+        renderState: {
           depthTest: { enabled: true },
           depthMask: true,
           cull: { enabled: false },
           blending: Cesium.BlendingState.ALPHA_BLEND
-        })
+        }
       }),
       asynchronous: false
     })

@@ -24,17 +24,24 @@
  *   8. updateOptions 直接修改参数 + 清空缓存，避免重建 Provider
  */
 import * as Cesium from 'cesium'
+import {
+  normalizeCogClassification,
+  type CogClassificationStyle,
+  type NormalizedCogClassificationStyle
+} from '../utils/cogClassification'
 
 //  类型定义
 export type CogColorMap = 'gray' | 'jet' | 'hot' | 'terrain'
 export type CogStretchMode = 'minmax' | 'stddev' | 'percent'
-export type CogRenderMode = 'singleband' | 'rgb'
+export type CogRenderMode = 'singleband' | 'rgb' | 'classified'
 export interface CogLayerOptions {
   renderMode?: CogRenderMode
   bandIndex?: number
   rgbBands?: [number, number, number]
   colormap?: CogColorMap
   stretch?: CogStretchMode
+  /** 分类图样式，renderMode 为 classified 时使用 */
+  classification?: CogClassificationStyle
   /** 百分比拉伸的截断百分比，默认 2（即 2%-98%） */
   percentClip?: number
   alpha?: number
@@ -61,6 +68,7 @@ interface CogContext {
   provider: CogImageryProvider
   options: Required<CogLayerOptions>
   meta: CogMeta
+  updateSeq: number
 }
 
 interface CogMeta {
@@ -93,6 +101,27 @@ class CanvasPool {
 }
 
 const canvasPool = new CanvasPool()
+
+function cloneClassificationStyle(style: CogClassificationStyle): CogClassificationStyle {
+  return {
+    ...style,
+    classes: style.classes.map((item) => ({ ...item }))
+  }
+}
+
+function mergeCogOptions(
+  base: Required<CogLayerOptions>,
+  patch: Partial<CogLayerOptions>
+): Required<CogLayerOptions> {
+  return {
+    ...base,
+    ...patch,
+    rgbBands: patch.rgbBands ? [...patch.rgbBands] as [number, number, number] : [...base.rgbBands] as [number, number, number],
+    classification: patch.classification
+      ? cloneClassificationStyle(patch.classification)
+      : cloneClassificationStyle(base.classification)
+  }
+}
 
 // LRU 瓦片缓存
 
@@ -276,6 +305,7 @@ class CogWorkerPool {
     colormap: CogColorMap
     stretch: CogStretchMode
     percentClip: number
+    classification: NormalizedCogClassificationStyle
   }): { requestId: number; promise: Promise<ImageBitmap | null> } {
     const workerIdx = this._nextWorker()
     const requestId = this._nextId++
@@ -297,9 +327,11 @@ class CogWorkerPool {
    * 取消一个瓦片请求 — 响应到达时丢弃
    */
   cancelRequest(requestId: number) {
-    if (this._pending.has(requestId)) {
+    const pending = this._pending.get(requestId)
+    if (pending) {
       this._pending.delete(requestId)
       this._cancelled.add(requestId)
+      pending.resolve({ bitmap: null, cancelled: true })
     }
   }
 
@@ -408,6 +440,7 @@ class CogImageryProvider {
     if (opts.bandIndex !== undefined)   this._options.bandIndex = opts.bandIndex
     if (opts.rgbBands !== undefined)    this._options.rgbBands = opts.rgbBands
     if (opts.renderMode !== undefined)  this._options.renderMode = opts.renderMode
+    if (opts.classification !== undefined) this._options.classification = opts.classification
     if (opts.percentClip !== undefined) this._options.percentClip = opts.percentClip
     if (opts.noDataValue !== undefined) {
       this._options.noDataValue = opts.noDataValue
@@ -453,7 +486,10 @@ class CogImageryProvider {
 
     // 缓存键包含所有影响渲染的参数
     const opts = this._options
-    const cacheKey = `${x}_${y}_${level}_${opts.colormap}_${opts.stretch}_${opts.bandIndex}_${opts.renderMode}_${opts.stretch === 'percent' ? opts.percentClip : ''}`
+    const classStyleKey = opts.renderMode === 'classified'
+      ? normalizeCogClassification(opts.classification).styleKey
+      : ''
+    const cacheKey = `${x}_${y}_${level}_${opts.colormap}_${opts.stretch}_${opts.bandIndex}_${opts.renderMode}_${classStyleKey}_${opts.stretch === 'percent' ? opts.percentClip : ''}`
     const cached = this._tileCache.get(cacheKey)
     if (cached) {
       return this._bitmapToCanvas(cached)
@@ -492,7 +528,8 @@ class CogImageryProvider {
         rgbBands:   opts.rgbBands,
         colormap:   opts.colormap,
         stretch:    opts.stretch,
-        percentClip: opts.percentClip
+        percentClip: opts.percentClip,
+        classification: normalizeCogClassification(opts.classification)
       })
       this._inflightRequests.set(requestId, requestEpoch)
 
@@ -526,7 +563,10 @@ class CogImageryProvider {
 
       // 检查 epoch：排队期间参数可能已变更
       const opts = this._options
-      const cacheKey = `${x}_${y}_${level}_${opts.colormap}_${opts.stretch}_${opts.bandIndex}_${opts.renderMode}_${opts.stretch === 'percent' ? opts.percentClip : ''}`
+      const classStyleKey = opts.renderMode === 'classified'
+        ? normalizeCogClassification(opts.classification).styleKey
+        : ''
+      const cacheKey = `${x}_${y}_${level}_${opts.colormap}_${opts.stretch}_${opts.bandIndex}_${opts.renderMode}_${classStyleKey}_${opts.stretch === 'percent' ? opts.percentClip : ''}`
       const cached = this._tileCache.get(cacheKey)
       if (cached) {
         next.resolve(this._bitmapToCanvas(cached))
@@ -562,6 +602,7 @@ export function useCogTif(getViewer: () => any) {
     rgbBands: [0, 1, 2],
     colormap: 'gray',
     stretch: 'minmax',
+    classification: { classes: [], transparentUnknown: true },
     percentClip: 2,
     alpha: 1,
     noDataValue: NaN,
@@ -579,7 +620,7 @@ export function useCogTif(getViewer: () => any) {
 
     if (cogLayers.has(id)) removeCogLayer(id)
 
-    const opts = { ...defaultOptions, ...options } as Required<CogLayerOptions>
+    const opts = mergeCogOptions(defaultOptions, options ?? {})
     const requestedRenderMode = options?.renderMode
 
     // 1. Worker Pool 打开 COG 文件 + 初始统计（广播到所有 Worker）
@@ -615,7 +656,7 @@ export function useCogTif(getViewer: () => any) {
     const imageryLayer = new Cesium.ImageryLayer(provider as any)
     viewer.imageryLayers.add(imageryLayer)
     imageryLayer.alpha = opts.alpha
-    cogLayers.set(id, { url, imageryLayer, provider, options: opts, meta })
+    cogLayers.set(id, { url, imageryLayer, provider, options: opts, meta, updateSeq: 0 })
 
     //飞到范围
     if (opts.flyTo) {
@@ -643,35 +684,38 @@ export function useCogTif(getViewer: () => any) {
     const ctx = cogLayers.get(id)
     if (!viewer || !ctx) return
 
-    Object.assign(ctx.options, options)
+    const updateSeq = ++ctx.updateSeq
+    const nextOptions = mergeCogOptions(ctx.options, options)
 
     // 如果切换了波段，在 Worker 中重新采样统计
     if (options.bandIndex !== undefined || options.rgbBands !== undefined || options.renderMode !== undefined) {
-      const sampleBands = ctx.options.renderMode === 'rgb' ? ctx.options.rgbBands : [ctx.options.bandIndex]
+      const sampleBands = nextOptions.renderMode === 'rgb' ? nextOptions.rgbBands : [nextOptions.bandIndex]
       const sampleW = Math.min(ctx.meta.width, 512)
       const sampleH = Math.min(ctx.meta.height, 512)
 
       const result = await workerPool.calcStats(id, sampleBands, sampleW, sampleH)
+      if (ctx.updateSeq !== updateSeq) return
       for (const key of Object.keys(result.stats)) {
         ctx.meta.stats.set(Number(key), result.stats[Number(key)])
       }
     }
 
     if (options.alpha !== undefined) {
-      ctx.imageryLayer.alpha = Math.max(0, Math.min(1, options.alpha))
+      nextOptions.alpha = Math.max(0, Math.min(1, options.alpha))
     }
 
-    // 更新 Provider 参数
-    ctx.provider.updateOptions(options)
-
-    // 强制 Cesium 丢弃已缓存瓦片并重新请求
+    // 使用新的 Provider 强制 Cesium 丢弃内部 imagery 缓存并重新请求瓦片。
     const layerIndex = viewer.imageryLayers.indexOf(ctx.imageryLayer)
+    ctx.provider.destroy()
     viewer.imageryLayers.remove(ctx.imageryLayer, false)
+    const newProvider = new CogImageryProvider(id, workerPool, ctx.meta, nextOptions)
     const newLayer = new Cesium.ImageryLayer(
-      ctx.provider as any
+      newProvider as any
     )
     viewer.imageryLayers.add(newLayer, layerIndex >= 0 ? layerIndex : undefined)
-    newLayer.alpha = ctx.options.alpha
+    newLayer.alpha = nextOptions.alpha
+    ctx.options = nextOptions
+    ctx.provider = newProvider
     ctx.imageryLayer = newLayer
 
     viewer.scene.requestRender()
@@ -723,6 +767,7 @@ export function useCogTif(getViewer: () => any) {
       renderMode: ctx.options.renderMode,
       colormap: ctx.options.colormap,
       stretch: ctx.options.stretch,
+      classification: ctx.options.classification,
       stats: Object.fromEntries(ctx.meta.stats)
     }
   }

@@ -60,13 +60,13 @@ export function useCesiumLayer(getViewer: () => any) {
     const provider = new Cesium.UrlTemplateImageryProvider({
           url,
             customTags: {
-        z_m: (imageryProvider: any, x: number, y: number, level: number) => {
+        z_m: (_imageryProvider: any, _x: number, _y: number, level: number) => {
           return zeroPad(level + 1, 2, 10)
         },
-        x_m: (imageryProvider: any, x: number, y: number, level: number) => {
+        x_m: (_imageryProvider: any, x: number, _y: number, _level: number) => {
           return zeroPad(x, 8, 16)
         },
-        y_m: (imageryProvider: any, x: number, y: number, level: number) => {
+        y_m: (_imageryProvider: any, _x: number, y: number, _level: number) => {
           return zeroPad(y, 8, 16)
         },
       },

@@ -19,7 +19,7 @@ export function useCesium(containerId = 'cesiumContainer') {
     Cesium.Ion.defaultAccessToken = undefined as any
 
     // 天地图影像底图 + 注记
-    const TDT_KEY = ''
+    const TDT_KEY = '079632b1ec7b3f0bdc3dc04309c59b1e'
     const tdtImgProvider = new Cesium.UrlTemplateImageryProvider({
       url: `https://t{s}.tianditu.gov.cn/img_w/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=img&STYLE=default&TILEMATRIXSET=w&FORMAT=tiles&TILECOL={x}&TILEROW={y}&TILEMATRIX={z}&tk=${TDT_KEY}`,
       subdomains: ['0', '1', '2', '3', '4', '5', '6', '7'],

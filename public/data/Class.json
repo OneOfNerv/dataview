@@ -1,0 +1,66 @@
+[
+    {
+        "name": "林地",
+        "value": 2,
+        "id": "forest",
+        "description": "This is a description of the class.",
+        "color": "#AAFF33"
+    },
+    {
+        "name": "裸地",
+         "value": 7,
+        "id": "bareland",
+        "description": "This is a description of the class.",
+        "color": "#FF5633"
+    },
+    {
+        "name": "水体",
+        "value": 5,
+        "id": "water",
+        "description": "This is a description of the class.",
+        "color": "#FF5722"
+    },
+    {
+        "name": "农田",
+        "value": 1,
+        "id": "agricultural",
+        "description": "This is a description of the class.",
+        "color": "#FF5733"
+    },
+    {
+        "name": "草地",
+        "value": 4,
+        "id": "grassland",
+        "description": "This is a description of the class.",
+        "color": "#FF5733"
+    },
+    {
+        "name": "湿地",
+        "value": 9,
+        "id": "wetland",
+        "description": "This is a description of the class.",
+        "color": "#5722FF"
+    },
+    {
+        "name": "灌木",
+        "value": 3,
+        "id": "shrubland",
+        "description": "This is a description of the class.",
+        "color": "#FF5733"
+    },
+    {
+        "name": "不透水面",
+        "value": 8,
+        "id": "urban",
+        "description": "This is a description of the class.",
+        "color": "#FF5733"
+    },
+    {
+        "name": "冰雪",
+        "value": 6,
+        "id": "snowice",
+        "description": "This is a description of the class.",
+        "color": "#FF5733"
+    }
+
+]

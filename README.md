@@ -2,28 +2,44 @@
 
 基于 **Vue 3 + CesiumJS + TypeScript** 的地理空间数据可视化工具集hooks方式封装，包括绘制标绘、量测分析、遥感影像加载、卫星轨道计算等功能。
 
-![DataView Preview](./8f7e35ae-ba4d-4524-a67c-6b3550be4524.png)
-
 ## 功能特性
 
 ### 地图交互
+
 - **绘制工具** — 线段、多边形交互绘制，输出 WKT 与四至范围
 - **量测工具** — 距离、面积、高差测量，支持动态标注
 - **地图控制** — 缩放、2D/3D 切换、复位，实时显示比例尺、相机坐标、鼠标拾取坐标与 FPS
+- **地图控制** — 三维立体大屏行政区显示
 
 ### 遥感影像
+
 - **GeoTIFF 加载** — 从 URL 解析 GeoTIFF，WebGL2 着色器高性能渲染，支持大尺寸影像动态下采样
-- **COG 瓦片服务** — Cloud Optimized GeoTIFF 按需加载，Worker Pool 多线程并行解码 + GPU 渲染 + LRU 瓦片缓存
+- **COG 免切片直接加载** — Cloud Optimized GeoTIFF 按需加载，Worker Pool 多线程并行解码 + GPU 渲染 + LRU 瓦片缓存
+- **波段合成** — Cloud Optimized GeoTIFF 按需加载 波段切换，RGB波段组合渲染 单波段拉伸渲染
 - **色带与拉伸** — 灰度 / Jet / Hot / Terrain 四种色带，Min-Max / 标准差 / 百分比三种拉伸模式，实时切换
+- **三维拉伸（3D热力图）** — 单波段tif三维拉伸
 
 ### 空间分析
+
 - **四至管理** — WKT POLYGON 解析为矩形区域，支持贴图与点击事件
 - **WKT 相交分析** — 两个 WKT 几何的相交计算、面积统计与可视化渲染
 - **卫星星下点轨迹** — 基于 TLE 两行轨道根数纯前端解算星下点，支持缓冲区分析与过境时间窗口计算
+- **卫星轨道可视化及推扫视锥体**  — 基于 TLE 两行轨道根数纯前端解算轨道，绘制卫星对地推扫视锥体，支持侧摆
 
 ### 图层管理
+
 - **KML / KMZ** — 文件上传解析与加载显示
 - **时间轴图层切换** — 按时间轴注册多时相图层，支持上一项 / 下一项切换与飞行定位
+
+
+![DataView Preview](./img/Snipaste_2026-07-01_14-00-25.png)
+![DataView Preview](./img/Snipaste_2026-07-01_14-00-51.png)
+![DataView Preview](./img/Snipaste_2026-07-01_14-01-03.png)
+![DataView Preview](./img/Snipaste_2026-07-01_16-06-04.png)
+![DataView Preview](./img/Snipaste_2026-07-01_14-01-32.png)
+![DataView Preview](./img/Snipaste_2026-07-01_14-01-56.png)
+![DataView Preview](./img/Snipaste_2026-07-01_14-02-56.png)
+
 
 ## 技术栈
 
