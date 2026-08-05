@@ -2,6 +2,18 @@
   <div class="toolbar">
     <button @click="drawTools.drawLine()">画线</button>
     <button @click="drawTools.drawPolygon()">画面</button>
+    <button @click="drawTools.drawRectangle()">画矩形</button>
+    <button @click="drawTools.editVertices()" title="选择图形后拖动顶点">拖动顶点</button>
+    <button @click="drawTools.translateDrawing()" title="拖动选中图形">整体平移</button>
+    <button @click="drawTools.addVertex()" title="在线段上点击插入顶点（矩形除外）">增加顶点</button>
+    <button @click="drawTools.deleteVertex()" title="点击顶点删除">删除顶点</button>
+    <button @click="drawTools.reshapeDrawing()" title="从一个顶点绘制到另一顶点，右键完成">整形要素</button>
+    <button @click="drawTools.undo()" title="Ctrl/Cmd + Z">撤销</button>
+    <button @click="drawTools.redo()" title="Ctrl/Cmd + Y">重做</button>
+    <button @click="toggleDrawSnapping()">吸附：{{ drawSnappingEnabled ? '开' : '关' }}</button>
+    <button @click="saveDrawingsToLocal">保存绘制</button>
+    <button @click="loadDrawingsFromLocal">重新载入</button>
+    <button @click="drawTools.stopEditing()">退出编辑</button>
     <button @click="drawTools.clearDrawings()">清空绘制</button>
     <button @click="measureTools.measureLength()">测距</button>
     <button @click="measureTools.measureArea()">测面</button>
@@ -259,6 +271,18 @@ const wktTools = useWktIntersection(getViewer)
 const nadirAreaTools = useNadirAreaTrackAnalysis(getViewer)
 const boxTools = useCesiumBoundingBox(getViewer)
 const drawTools = useCesiumDraw(getViewer)
+const drawSnappingEnabled = ref(true)
+const toggleDrawSnapping = () => {
+  drawSnappingEnabled.value = !drawSnappingEnabled.value
+  drawTools.setSnappingEnabled(drawSnappingEnabled.value)
+}
+const saveDrawingsToLocal = () => {
+  const drawings = drawTools.saveDrawings()
+  console.info(`已保存 ${drawings.length} 个绘制图形`)
+}
+const loadDrawingsFromLocal = () => {
+  if (!drawTools.loadDrawings()) console.warn('没有可恢复的绘制数据')
+}
 const measureTools = useCesiumMeasure(getViewer)
 const controls = useCesiumControls(getViewer)
 const kmlTools = useCesiumKml(getViewer)
